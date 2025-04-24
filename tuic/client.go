@@ -3,7 +3,6 @@ package tuic
 import (
 	"context"
 	"io"
-	"math/rand"
 	"net"
 	"runtime"
 	"sync"
@@ -106,72 +105,43 @@ func (c *Client) offer(ctx context.Context) (*clientQUICConnection, error) {
 	return conn, nil
 }
 
-// sendFakeUDPPackets sends a series of UDP packets that mimic Steam game traffic
+// sendFakeUDPPackets sends a series of UDP packets that mimic Counter-Strike/Steam game traffic
 // to help bypass QoS filtering before establishing the actual QUIC connection
 func (c *Client) sendFakeUDPPackets(udpConn net.Conn) {
-	// Create a random source for generating randomized packet content
-	randSource := rand.NewSource(time.Now().UnixNano())
-	rng := rand.New(randSource)
+	// Simple CS:GO/Steam style packets - just focusing on the packet format without complex logic
 
-	// Number of fake packets to send (3-5)
-	numPackets := 3 + rng.Intn(3)
-
-	for i := 0; i < numPackets; i++ {
-		var packet []byte
-
-		// Alternate between different packet types
-		switch i % 3 {
-		case 0:
-			// Steam heartbeat-like packet
-			packet = []byte{
-				0xff, 0xff, 0xff, 0xff, // Steam packet header
-				0x71, 0x30, 0x30, 0x30, // Heartbeat prefix
-				byte(rng.Intn(256)), byte(rng.Intn(256)), // Random sequence number
-				byte(rng.Intn(256)), byte(rng.Intn(256)),
-			}
-
-			// Add random payload (20-40 bytes)
-			payloadLen := 20 + rng.Intn(21)
-			payload := make([]byte, payloadLen)
-			rng.Read(payload)
-			packet = append(packet, payload...)
-
-		case 1:
-			// Steam game data-like packet
-			packet = []byte{
-				0xff, 0xff, 0xff, 0xff, // Steam packet header
-				0x56, 0x41, 0x4c, 0x56, // "VALV"
-				0x45, byte(rng.Intn(256)), byte(rng.Intn(256)), byte(rng.Intn(256)),
-			}
-
-			// Add random payload (60-100 bytes)
-			payloadLen := 60 + rng.Intn(41)
-			payload := make([]byte, payloadLen)
-			rng.Read(payload)
-			packet = append(packet, payload...)
-
-		case 2:
-			// Counter-Strike/Source-like packet
-			packet = []byte{
-				0xff, 0xff, 0xff, 0xff, // Steam packet header
-				0x55, 0x00, 0x00, 0x00, // Source engine packet type
-				byte(rng.Intn(256)), byte(rng.Intn(256)), // Random data
-				0x01, 0x00, // Some fixed values common in Source games
-			}
-
-			// Add random payload (40-80 bytes)
-			payloadLen := 40 + rng.Intn(41)
-			payload := make([]byte, payloadLen)
-			rng.Read(payload)
-			packet = append(packet, payload...)
-		}
-
-		// Send the packet
-		udpConn.Write(packet)
-
-		// Random delay between 5-25ms
-		time.Sleep(time.Duration(5+rng.Intn(21)) * time.Millisecond)
+	// Counter-Strike/Source engine packet 1 (A2S_INFO query)
+	packet1 := []byte{
+		0xff, 0xff, 0xff, 0xff, // Steam packet header
+		0x54, 0x53, 0x6f, 0x75, // "TSource Engine Query" command
+		0x72, 0x63, 0x65, 0x20,
+		0x45, 0x6e, 0x67, 0x69,
+		0x6e, 0x65, 0x20, 0x51,
+		0x75, 0x65, 0x72, 0x79, 0x00,
 	}
+
+	// Counter-Strike heartbeat packet
+	packet2 := []byte{
+		0xff, 0xff, 0xff, 0xff, // Steam packet header
+		0x71, 0x30, 0x30, 0x30, // Heartbeat command
+		0x02, 0x00, 0x00, 0x00, // Sequence
+		0x01, 0x02, 0x03, 0x04, // Some payload
+		0x05, 0x06, 0x07, 0x08,
+	}
+
+	// Counter-Strike client "connect" packet
+	packet3 := []byte{
+		0xff, 0xff, 0xff, 0xff, // Steam packet header
+		0x63, 0x6f, 0x6e, 0x6e, // "connect" command
+		0x65, 0x63, 0x74, 0x00,
+		0x30, 0x31, 0x32, 0x33, // Version and random data
+		0x34, 0x35, 0x36, 0x37,
+	}
+
+	// Just send the packets without delays or complex logic that might interfere
+	udpConn.Write(packet1)
+	udpConn.Write(packet2)
+	udpConn.Write(packet3)
 }
 
 func (c *Client) offerNew(ctx context.Context) (*clientQUICConnection, error) {
