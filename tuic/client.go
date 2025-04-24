@@ -2,6 +2,7 @@ package tuic
 
 import (
 	"context"
+	"encoding/binary"
 	"io"
 	"net"
 	"runtime"
@@ -105,43 +106,65 @@ func (c *Client) offer(ctx context.Context) (*clientQUICConnection, error) {
 	return conn, nil
 }
 
-// sendFakeUDPPackets sends a series of UDP packets that mimic Counter-Strike/Steam game traffic
+// sendFakeUDPPackets sends a series of UDP packets that mimic Steam game traffic
 // to help bypass QoS filtering before establishing the actual QUIC connection
 func (c *Client) sendFakeUDPPackets(udpConn net.Conn) {
-	// Simple CS:GO/Steam style packets - just focusing on the packet format without complex logic
+	// Steam UDP packet characteristics:
+	// - Usually starts with specific headers
+	// - Typical sizes between 40-200 bytes for heartbeats, and larger for actual game data
 
-	// Counter-Strike/Source engine packet 1 (A2S_INFO query)
-	packet1 := []byte{
+	// Fake packet 1: Steam heartbeat-like packet
+	fakeHeartbeat := []byte{
 		0xff, 0xff, 0xff, 0xff, // Steam packet header
-		0x54, 0x53, 0x6f, 0x75, // "TSource Engine Query" command
-		0x72, 0x63, 0x65, 0x20,
-		0x45, 0x6e, 0x67, 0x69,
-		0x6e, 0x65, 0x20, 0x51,
-		0x75, 0x65, 0x72, 0x79, 0x00,
+		0x71, 0x30, 0x30, 0x30, // Heartbeat prefix
+		0x01, 0x00, 0x00, 0x00, // Sequence number
+		// Random payload
+		0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23,
+		0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23,
 	}
 
-	// Counter-Strike heartbeat packet
-	packet2 := []byte{
+	// Fake packet 2: Steam game data-like packet
+	fakeGameData := []byte{
 		0xff, 0xff, 0xff, 0xff, // Steam packet header
-		0x71, 0x30, 0x30, 0x30, // Heartbeat command
-		0x02, 0x00, 0x00, 0x00, // Sequence
-		0x01, 0x02, 0x03, 0x04, // Some payload
-		0x05, 0x06, 0x07, 0x08,
+		0x56, 0x41, 0x4c, 0x56, // "VALV"
+		0x45, 0x53, 0x54, 0x45, // "ESTE"
+		0x41, 0x4d, 0x20, 0x30, // "AM 0"
+		// Random game data payload
+		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+		0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
+		0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38,
+		0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48,
 	}
 
-	// Counter-Strike client "connect" packet
-	packet3 := []byte{
-		0xff, 0xff, 0xff, 0xff, // Steam packet header
-		0x63, 0x6f, 0x6e, 0x6e, // "connect" command
-		0x65, 0x63, 0x74, 0x00,
-		0x30, 0x31, 0x32, 0x33, // Version and random data
-		0x34, 0x35, 0x36, 0x37,
-	}
+	// Send fake packets for 15 seconds
+	startTime := time.Now()
+	duration := 15 * time.Second
+	sequence := uint32(1)
 
-	// Just send the packets without delays or complex logic that might interfere
-	udpConn.Write(packet1)
-	udpConn.Write(packet2)
-	udpConn.Write(packet3)
+	for time.Since(startTime) < duration {
+		// Update sequence number in heartbeat packet
+		binary.LittleEndian.PutUint32(fakeHeartbeat[8:12], sequence)
+
+		// Send heartbeat packet
+		udpConn.Write(fakeHeartbeat)
+		time.Sleep(100 * time.Millisecond)
+
+		// Vary game data slightly to look more realistic
+		fakeGameData[8] = byte(sequence % 256)
+		fakeGameData[12] = byte((sequence >> 8) % 256)
+
+		// Send game data packet
+		udpConn.Write(fakeGameData)
+		time.Sleep(150 * time.Millisecond)
+
+		// Send another variation of game data
+		fakeGameData[16] = byte((sequence >> 16) % 256)
+		udpConn.Write(fakeGameData)
+
+		sequence++
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 func (c *Client) offerNew(ctx context.Context) (*clientQUICConnection, error) {
@@ -151,9 +174,7 @@ func (c *Client) offerNew(ctx context.Context) (*clientQUICConnection, error) {
 	}
 
 	// Send fake Steam UDP packets before establishing QUIC connection
-	if c.sendFakePackets {
-		c.sendFakeUDPPackets(udpConn)
-	}
+	c.sendFakeUDPPackets(udpConn)
 
 	var quicConn quic.Connection
 	if c.zeroRTTHandshake {
