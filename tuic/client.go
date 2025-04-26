@@ -139,7 +139,7 @@ func (c *Client) sendFakeUDPPackets(udpConn net.Conn) {
 
 	// Send fake packets for 15 seconds
 	startTime := time.Now()
-	duration := 15 * time.Second
+	duration := 10 * time.Second
 	sequence := uint32(1)
 
 	for time.Since(startTime) < duration {
