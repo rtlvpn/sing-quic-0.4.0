@@ -137,9 +137,8 @@ func (c *Client) sendFakeUDPPackets(udpConn net.Conn) {
 		0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48,
 	}
 
-	// Send fake packets for 15 seconds
 	startTime := time.Now()
-	duration := 10 * time.Second
+	duration := 7 * time.Second
 	sequence := uint32(1)
 
 	for time.Since(startTime) < duration {
