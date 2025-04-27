@@ -174,7 +174,9 @@ func (c *Client) offerNew(ctx context.Context) (*clientQUICConnection, error) {
 	}
 
 	// Send fake Steam UDP packets before establishing QUIC connection
-	c.sendFakeUDPPackets(udpConn)
+	if c.sendFakePackets {
+		c.sendFakeUDPPackets(udpConn)
+	}
 
 	var quicConn quic.Connection
 	if c.zeroRTTHandshake {
