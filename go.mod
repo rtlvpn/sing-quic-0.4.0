@@ -9,6 +9,8 @@ require (
 	golang.org/x/crypto v0.32.0
 	golang.org/x/exp v0.0.0-20240506185415-9bf2ced13842
 )
+replace github.com/sagernet/quic-go =>  github.com/rtlvpn/quic-go-0.49.0-beta.1 v0.0.0-20250426235525-cca3ce71a3a5
+
 
 require (
 	github.com/go-task/slim-sprig v0.0.0-20230315185526-52ccab3ef572 // indirect
