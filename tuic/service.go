@@ -6,13 +6,14 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"math/rand"
 	"net"
 	"runtime"
 	"sync"
 	"time"
 
 	"github.com/sagernet/quic-go"
-	"github.com/sagernet/sing-quic"
+	qtls "github.com/sagernet/sing-quic"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/auth"
 	"github.com/sagernet/sing/common/baderror"
@@ -61,6 +62,9 @@ type Service[U comparable] struct {
 }
 
 func NewService[U comparable](options ServiceOptions) (*Service[U], error) {
+	// Initialize random number generator for proper randomness
+	rand.Seed(time.Now().UnixNano())
+
 	if options.AuthTimeout == 0 {
 		options.AuthTimeout = 3 * time.Second
 	}
@@ -77,7 +81,7 @@ func NewService[U comparable](options ServiceOptions) (*Service[U], error) {
 	switch options.CongestionControl {
 	case "":
 		options.CongestionControl = "cubic"
-	case "cubic", "new_reno", "bbr":
+	case "cubic", "new_reno", "bbr", "brutal":
 	default:
 		return nil, E.New("unknown congestion control algorithm: ", options.CongestionControl)
 	}
@@ -107,8 +111,15 @@ func (s *Service[U]) UpdateUsers(userList []U, uuidList [][16]byte, passwordList
 }
 
 func (s *Service[U]) Start(conn net.PacketConn) error {
+	// Wrap the provided connection with our custom packet connection
+	// that intercepts and handles fake Steam packets
+	wrappedConn := &fakeSteamInterceptor{
+		PacketConn: conn,
+		service:    s,
+	}
+
 	if !s.quicConfig.Allow0RTT {
-		listener, err := qtls.Listen(conn, s.tlsConfig, s.quicConfig)
+		listener, err := qtls.Listen(wrappedConn, s.tlsConfig, s.quicConfig)
 		if err != nil {
 			return err
 		}
@@ -128,7 +139,7 @@ func (s *Service[U]) Start(conn net.PacketConn) error {
 			}
 		}()
 	} else {
-		listener, err := qtls.ListenEarly(conn, s.tlsConfig, s.quicConfig)
+		listener, err := qtls.ListenEarly(wrappedConn, s.tlsConfig, s.quicConfig)
 		if err != nil {
 			return err
 		}
@@ -169,6 +180,73 @@ func (s *Service[U]) handleConnection(connection quic.Connection) {
 		udpConnMap: make(map[uint16]*udpPacketConn),
 	}
 	session.handle()
+}
+
+// handleFakeSteamPacket processes incoming fake Steam packets and responds with appropriate server responses
+// This is used to mimic Steam server behavior before establishing the QUIC connection
+func (s *Service[U]) handleFakeSteamPacket(conn net.PacketConn, remoteAddr net.Addr, data []byte) {
+	// Check if this looks like a Steam client packet
+	if len(data) < 8 {
+		return // Too short to be a Steam packet
+	}
+
+	// Check for Steam packet header (0xFF, 0xFF, 0xFF, 0xFF)
+	if data[0] == 0xFF && data[1] == 0xFF && data[2] == 0xFF && data[3] == 0xFF {
+		// Determine packet type
+		if len(data) >= 12 && data[4] == 0x71 && data[5] == 0x30 && data[6] == 0x30 && data[7] == 0x30 {
+			// This is a heartbeat packet, respond with a server heartbeat acknowledgment
+			// Extract sequence number
+			seqNum := binary.LittleEndian.Uint32(data[8:12])
+
+			// Create server response
+			serverResponse := []byte{
+				0xFF, 0xFF, 0xFF, 0xFF, // Steam packet header
+				0x72, 0x30, 0x30, 0x30, // Server heartbeat response prefix
+				0x00, 0x00, 0x00, 0x00, // Sequence number (will be set below)
+				// Server payload
+				0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+				0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8,
+			}
+
+			// Set the sequence number in the response
+			binary.LittleEndian.PutUint32(serverResponse[8:12], seqNum)
+
+			// Add a small delay before responding (150-250ms)
+			delayMs := 150 + rand.Intn(100)
+			time.Sleep(time.Duration(delayMs) * time.Millisecond)
+
+			// Send the response
+			conn.WriteTo(serverResponse, remoteAddr)
+
+		} else if len(data) >= 16 && data[4] == 0x56 && data[5] == 0x41 && data[6] == 0x4c && data[7] == 0x56 {
+			// This is a game data packet (VALV header), respond with a server game data packet
+
+			// Create server game data response
+			serverGameData := []byte{
+				0xFF, 0xFF, 0xFF, 0xFF, // Steam packet header
+				0x56, 0x41, 0x4c, 0x53, // "VALS" (Server variant of VALV)
+				0x45, 0x52, 0x56, 0x45, // "ERVE"
+				0x52, 0x20, 0x30, 0x31, // "R 01"
+				// Server game data payload
+				0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8,
+				0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8,
+				0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0xD8,
+				0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7, 0xE8,
+			}
+
+			// Copy some bytes from the request to make the response look related
+			if len(data) >= 20 {
+				copy(serverGameData[16:20], data[16:20])
+			}
+
+			// Add a variable delay before responding (200-350ms)
+			delayMs := 200 + rand.Intn(150)
+			time.Sleep(time.Duration(delayMs) * time.Millisecond)
+
+			// Send the response
+			conn.WriteTo(serverGameData, remoteAddr)
+		}
+	}
 }
 
 type serverSession[U comparable] struct {
@@ -426,4 +504,38 @@ func (c *serverConn) RemoteAddr() net.Addr {
 func (c *serverConn) Close() error {
 	c.Stream.CancelRead(0)
 	return c.Stream.Close()
+}
+
+// fakeSteamInterceptor is a wrapper around a net.PacketConn that intercepts
+// and handles fake Steam packets before passing other packets to the QUIC handler
+type fakeSteamInterceptor struct {
+	net.PacketConn
+	service interface {
+		handleFakeSteamPacket(conn net.PacketConn, remoteAddr net.Addr, data []byte)
+	}
+}
+
+// ReadFrom intercepts packets, processes fake Steam packets, and passes other packets to QUIC
+func (f *fakeSteamInterceptor) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
+	n, addr, err = f.PacketConn.ReadFrom(p)
+	if err != nil {
+		return
+	}
+
+	// Check if this might be a fake Steam packet (they start with 0xFF 0xFF 0xFF 0xFF)
+	if n >= 4 && p[0] == 0xFF && p[1] == 0xFF && p[2] == 0xFF && p[3] == 0xFF {
+		// Make a copy of the data for handling separately
+		dataCopy := make([]byte, n)
+		copy(dataCopy, p[:n])
+
+		// Process the fake Steam packet in a separate goroutine to avoid blocking
+		go f.service.handleFakeSteamPacket(f.PacketConn, addr, dataCopy)
+
+		// Return an error to tell QUIC to ignore this packet
+		// We use io.EOF which is a sentinel error that QUIC will handle gracefully
+		return 0, addr, io.EOF
+	}
+
+	// For non-Steam packets, return normally to let QUIC process them
+	return
 }
