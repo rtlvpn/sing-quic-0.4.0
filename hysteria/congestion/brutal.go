@@ -13,7 +13,7 @@ const (
 
 	pktInfoSlotCount           = 5 // slot index is based on seconds, so this is basically how many seconds we sample
 	minSampleCount             = 50
-	minAckRate                 = 0.8
+	minAckRate                 = 0.6
 	congestionWindowMultiplier = 2
 	debugPrintInterval         = 2
 )
