@@ -6,12 +6,6 @@ import (
 	"github.com/sagernet/quic-go/congestion"
 )
 
-const (
-	maxBurstPackets               = 10
-	maxBurstPacingDelayMultiplier = 4
-	minPacingDelay                = time.Millisecond
-)
-
 // The pacer implements a token bucket pacing algorithm.
 type pacer struct {
 	budgetAtLastSent congestion.ByteCount
@@ -51,10 +45,14 @@ func (p *pacer) Budget(now time.Time) congestion.ByteCount {
 }
 
 func (p *pacer) maxBurstSize() congestion.ByteCount {
-	return maxByteCount(
-		congestion.ByteCount((maxBurstPacingDelayMultiplier*minPacingDelay).Nanoseconds())*p.getBandwidth()/1e9,
-		maxBurstPackets*p.maxDatagramSize,
-	)
+	// For ADSL2+, we need to be careful with burst sizes
+	// Calculate burst based on bandwidth and delay
+	bandwidthBurst := congestion.ByteCount((maxBurstPacingDelayMultiplier * minPacingDelay).Nanoseconds()) * p.getBandwidth() / 1e9
+
+	// But also cap by packet count to avoid excessive bursts on high-bandwidth connections
+	packetBurst := maxBurstPackets * p.maxDatagramSize
+
+	return maxByteCount(bandwidthBurst, packetBurst)
 }
 
 // TimeUntilSend returns when the next packet should be sent.
@@ -63,16 +61,30 @@ func (p *pacer) TimeUntilSend() time.Time {
 	if p.budgetAtLastSent >= p.maxDatagramSize {
 		return time.Time{}
 	}
+
+	// For real-time applications on ADSL2+, we want to be less strict with pacing
+	// to avoid introducing unnecessary delays
+
+	// If we have at least 60% of the required budget, send immediately
+	// This helps with latency-sensitive applications
+	if p.budgetAtLastSent >= p.maxDatagramSize*60/100 {
+		return time.Time{}
+	}
+
 	diff := 1e9 * uint64(p.maxDatagramSize-p.budgetAtLastSent)
 	bw := uint64(p.getBandwidth())
-	// We might need to round up this value.
-	// Otherwise, we might have a budget (slightly) smaller than the datagram size when the timer expires.
+	if bw == 0 {
+		return time.Time{} // Don't delay if bandwidth estimate is zero
+	}
+
+	// Calculate wait time
 	d := diff / bw
-	// this is effectively a math.Ceil, but using only integer math
 	if diff%bw > 0 {
 		d++
 	}
-	return p.lastSentTime.Add(maxDuration(minPacingDelay, time.Duration(d)*time.Nanosecond))
+
+	// For ADSL2+ gaming/streaming, use a shorter minimum pacing delay
+	return p.lastSentTime.Add(time.Duration(d) * time.Nanosecond)
 }
 
 func (p *pacer) SetMaxDatagramSize(s congestion.ByteCount) {
