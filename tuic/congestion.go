@@ -57,5 +57,11 @@ func setCongestion(ctx context.Context, connection quic.Connection, congestionNa
 			false,    // debug disabled
 			nil,      // No logger needed, the brutal sender handles nil logger gracefully
 		))
+	case "quic_dc":
+		// Add QUIC-DC congestion control option
+		connection.SetCongestionControl(NewQUICDCController(
+			false, // debug disabled
+			nil,   // No logger needed
+		))
 	}
 }

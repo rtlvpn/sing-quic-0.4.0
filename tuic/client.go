@@ -68,7 +68,7 @@ func NewClient(options ClientOptions) (*Client, error) {
 	switch options.CongestionControl {
 	case "":
 		options.CongestionControl = "cubic"
-	case "cubic", "new_reno", "bbr", "brutal":
+	case "cubic", "new_reno", "bbr", "brutal", "quic_dc":
 	default:
 		return nil, E.New("unknown congestion control algorithm: ", options.CongestionControl)
 	}

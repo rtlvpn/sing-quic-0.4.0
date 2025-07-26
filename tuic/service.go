@@ -77,7 +77,7 @@ func NewService[U comparable](options ServiceOptions) (*Service[U], error) {
 	switch options.CongestionControl {
 	case "":
 		options.CongestionControl = "cubic"
-	case "cubic", "new_reno", "bbr", "brutal":
+	case "cubic", "new_reno", "bbr", "brutal", "quic_dc":
 	default:
 		return nil, E.New("unknown congestion control algorithm: ", options.CongestionControl)
 	}
