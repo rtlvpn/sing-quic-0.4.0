@@ -35,22 +35,28 @@ type ClientOptions struct {
 	// SendFakePackets enables sending fake Steam-like UDP packets before the QUIC handshake,
 	// which can help bypass QoS filters or traffic shaping that might target QUIC traffic.
 	// These fake packets mimic legitimate game traffic patterns to improve connection reliability.
-	SendFakePackets bool
+	SendFakePackets    bool
+	FakePacketDuration time.Duration
+	FakeHeartbeatData  []byte
+	FakeGameData       []byte
 }
 
 type Client struct {
-	ctx               context.Context
-	dialer            N.Dialer
-	serverAddr        M.Socksaddr
-	tlsConfig         aTLS.Config
-	quicConfig        *quic.Config
-	uuid              [16]byte
-	password          string
-	congestionControl string
-	udpStream         bool
-	zeroRTTHandshake  bool
-	heartbeat         time.Duration
-	sendFakePackets   bool
+	ctx                context.Context
+	dialer             N.Dialer
+	serverAddr         M.Socksaddr
+	tlsConfig          aTLS.Config
+	quicConfig         *quic.Config
+	uuid               [16]byte
+	password           string
+	congestionControl  string
+	udpStream          bool
+	zeroRTTHandshake   bool
+	heartbeat          time.Duration
+	sendFakePackets    bool
+	fakePacketDuration time.Duration
+	fakeHeartbeatData  []byte
+	fakeGameData       []byte
 
 	connAccess sync.RWMutex
 	conn       *clientQUICConnection
@@ -72,19 +78,56 @@ func NewClient(options ClientOptions) (*Client, error) {
 	default:
 		return nil, E.New("unknown congestion control algorithm: ", options.CongestionControl)
 	}
+	// Set default fake packet data if not provided
+	fakeHeartbeatData := options.FakeHeartbeatData
+	if len(fakeHeartbeatData) == 0 {
+		fakeHeartbeatData = []byte{
+			0xff, 0xff, 0xff, 0xff, // Steam packet header
+			0x71, 0x30, 0x30, 0x30, // Heartbeat prefix
+			0x01, 0x00, 0x00, 0x00, // Sequence number
+			// Random payload
+			0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23,
+			0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23,
+		}
+	}
+
+	fakeGameData := options.FakeGameData
+	if len(fakeGameData) == 0 {
+		fakeGameData = []byte{
+			0xff, 0xff, 0xff, 0xff, // Steam packet header
+			0x56, 0x41, 0x4c, 0x56, // "VALV"
+			0x45, 0x53, 0x54, 0x45, // "ESTE"
+			0x41, 0x4d, 0x20, 0x30, // "AM 0"
+			// Random game data payload
+			0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+			0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+			0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
+			0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38,
+			0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48,
+		}
+	}
+
+	fakePacketDuration := options.FakePacketDuration
+	if fakePacketDuration == 0 {
+		fakePacketDuration = 7 * time.Second
+	}
+
 	return &Client{
-		ctx:               options.Context,
-		dialer:            options.Dialer,
-		serverAddr:        options.ServerAddress,
-		tlsConfig:         options.TLSConfig,
-		quicConfig:        quicConfig,
-		uuid:              options.UUID,
-		password:          options.Password,
-		congestionControl: options.CongestionControl,
-		udpStream:         options.UDPStream,
-		zeroRTTHandshake:  options.ZeroRTTHandshake,
-		heartbeat:         options.Heartbeat,
-		sendFakePackets:   options.SendFakePackets,
+		ctx:                options.Context,
+		dialer:             options.Dialer,
+		serverAddr:         options.ServerAddress,
+		tlsConfig:          options.TLSConfig,
+		quicConfig:         quicConfig,
+		uuid:               options.UUID,
+		password:           options.Password,
+		congestionControl:  options.CongestionControl,
+		udpStream:          options.UDPStream,
+		zeroRTTHandshake:   options.ZeroRTTHandshake,
+		heartbeat:          options.Heartbeat,
+		sendFakePackets:    options.SendFakePackets,
+		fakePacketDuration: fakePacketDuration,
+		fakeHeartbeatData:  fakeHeartbeatData,
+		fakeGameData:       fakeGameData,
 	}, nil
 }
 
@@ -109,56 +152,43 @@ func (c *Client) offer(ctx context.Context) (*clientQUICConnection, error) {
 // sendFakeUDPPackets sends a series of UDP packets that mimic Steam game traffic
 // to help bypass QoS filtering before establishing the actual QUIC connection
 func (c *Client) sendFakeUDPPackets(udpConn net.Conn) {
-	// Steam UDP packet characteristics:
-	// - Usually starts with specific headers
-	// - Typical sizes between 40-200 bytes for heartbeats, and larger for actual game data
+	// Use configurable fake packet data
+	fakeHeartbeat := make([]byte, len(c.fakeHeartbeatData))
+	copy(fakeHeartbeat, c.fakeHeartbeatData)
 
-	// Fake packet 1: Steam heartbeat-like packet
-	fakeHeartbeat := []byte{
-		0xff, 0xff, 0xff, 0xff, // Steam packet header
-		0x71, 0x30, 0x30, 0x30, // Heartbeat prefix
-		0x01, 0x00, 0x00, 0x00, // Sequence number
-		// Random payload
-		0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23,
-		0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23,
-	}
-
-	// Fake packet 2: Steam game data-like packet
-	fakeGameData := []byte{
-		0xff, 0xff, 0xff, 0xff, // Steam packet header
-		0x56, 0x41, 0x4c, 0x56, // "VALV"
-		0x45, 0x53, 0x54, 0x45, // "ESTE"
-		0x41, 0x4d, 0x20, 0x30, // "AM 0"
-		// Random game data payload
-		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-		0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-		0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
-		0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38,
-		0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48,
-	}
+	fakeGameData := make([]byte, len(c.fakeGameData))
+	copy(fakeGameData, c.fakeGameData)
 
 	startTime := time.Now()
-	duration := 7 * time.Second
+	duration := c.fakePacketDuration
 	sequence := uint32(1)
 
 	for time.Since(startTime) < duration {
-		// Update sequence number in heartbeat packet
-		binary.LittleEndian.PutUint32(fakeHeartbeat[8:12], sequence)
+		// Update sequence number in heartbeat packet (if packet is long enough)
+		if len(fakeHeartbeat) >= 12 {
+			binary.LittleEndian.PutUint32(fakeHeartbeat[8:12], sequence)
+		}
 
 		// Send heartbeat packet
 		udpConn.Write(fakeHeartbeat)
 		time.Sleep(100 * time.Millisecond)
 
-		// Vary game data slightly to look more realistic
-		fakeGameData[8] = byte(sequence % 256)
-		fakeGameData[12] = byte((sequence >> 8) % 256)
+		// Vary game data slightly to look more realistic (if packet is long enough)
+		if len(fakeGameData) > 8 {
+			fakeGameData[8] = byte(sequence % 256)
+		}
+		if len(fakeGameData) > 12 {
+			fakeGameData[12] = byte((sequence >> 8) % 256)
+		}
 
 		// Send game data packet
 		udpConn.Write(fakeGameData)
 		time.Sleep(150 * time.Millisecond)
 
-		// Send another variation of game data
-		fakeGameData[16] = byte((sequence >> 16) % 256)
+		// Send another variation of game data (if packet is long enough)
+		if len(fakeGameData) > 16 {
+			fakeGameData[16] = byte((sequence >> 16) % 256)
+		}
 		udpConn.Write(fakeGameData)
 
 		sequence++
