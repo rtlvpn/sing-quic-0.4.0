@@ -58,7 +58,7 @@ type Client struct {
 	fakeHeartbeatData  []byte
 	fakeGameData       []byte
 
-	connAccess sync.RWMutex
+	connAccess sync.Mutex
 	conn       *clientQUICConnection
 }
 
