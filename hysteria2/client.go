@@ -65,8 +65,7 @@ type Client struct {
 	quicConfig         *quic.Config
 	udpDisabled        bool
 
-	connAccess sync.Mutex
-	connErr    error
+	connAccess sync.RWMutex
 	conn       *clientQUICConnection
 }
 
@@ -143,12 +142,13 @@ func parsePorts(serverPorts []string) ([]uint16, error) {
 }
 
 func (c *Client) offer(ctx context.Context) (*clientQUICConnection, error) {
+	conn := c.conn
+	if conn != nil && conn.active() {
+		return conn, nil
+	}
 	c.connAccess.Lock()
 	defer c.connAccess.Unlock()
-	if c.connErr != nil {
-		return nil, c.connErr
-	}
-	conn := c.conn
+	conn = c.conn
 	if conn != nil && conn.active() {
 		return conn, nil
 	}
@@ -290,16 +290,10 @@ func (c *Client) ListenPacket(ctx context.Context) (net.PacketConn, error) {
 }
 
 func (c *Client) CloseWithError(err error) error {
-	c.connAccess.Lock()
-	defer c.connAccess.Unlock()
-	if c.connErr != nil {
-		return nil
-	}
 	conn := c.conn
 	if conn != nil {
 		conn.closeWithError(err)
 	}
-	c.connErr = err
 	return nil
 }
 
