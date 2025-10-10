@@ -6,6 +6,7 @@ import (
 	"github.com/sagernet/sing/common/canceler"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
+	N "github.com/sagernet/sing/common/network"
 )
 
 func (s *serverSession[U]) loopMessages() {
@@ -63,10 +64,17 @@ func (s *serverSession[U]) handleUDPMessage(message *udpMessage, udpStream bool)
 			s.udpAccess.Unlock()
 		})
 		udpConn.sessionID = message.sessionID
+
+		// Apply bandwidth limiting if enabled
+		var packetConn N.NetPacketConn = udpConn
+		if s.bandwidthLimiter != nil {
+			packetConn = newBandwidthLimitedPacketConn(udpConn, s.bandwidthLimiter)
+		}
+
 		s.udpAccess.Lock()
 		s.udpConnMap[message.sessionID] = udpConn
 		s.udpAccess.Unlock()
-		newCtx, newConn := canceler.NewPacketConn(udpConn.ctx, udpConn, s.udpTimeout)
+		newCtx, newConn := canceler.NewPacketConn(udpConn.ctx, packetConn, s.udpTimeout)
 		go s.handler.NewPacketConnectionEx(newCtx, newConn, M.SocksaddrFromNet(s.quicConn.RemoteAddr()).Unwrap(), message.destination, nil)
 	}
 	udpConn.inputPacket(message)

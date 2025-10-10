@@ -37,6 +37,7 @@ type ServiceOptions struct {
 	Heartbeat         time.Duration
 	UDPTimeout        time.Duration
 	Handler           ServiceHandler
+	BandwidthLimit    BandwidthLimit
 }
 
 type ServiceHandler interface {
@@ -52,10 +53,12 @@ type Service[U comparable] struct {
 	quicConfig        *quic.Config
 	userMap           map[[16]byte]U
 	passwordMap       map[U]string
+	userBandwidthMap  map[U]UserBandwidthLimits
 	congestionControl string
 	authTimeout       time.Duration
 	udpTimeout        time.Duration
 	handler           ServiceHandler
+	bandwidthManager  *BandwidthManager
 
 	quicListener io.Closer
 }
@@ -89,22 +92,74 @@ func NewService[U comparable](options ServiceOptions) (*Service[U], error) {
 		heartbeat:         options.Heartbeat,
 		quicConfig:        quicConfig,
 		userMap:           make(map[[16]byte]U),
+		userBandwidthMap:  make(map[U]UserBandwidthLimits),
 		congestionControl: options.CongestionControl,
 		authTimeout:       options.AuthTimeout,
 		udpTimeout:        options.UDPTimeout,
 		handler:           options.Handler,
+		bandwidthManager:  NewBandwidthManager(options.BandwidthLimit),
 	}, nil
 }
 
 func (s *Service[U]) UpdateUsers(userList []U, uuidList [][16]byte, passwordList []string) {
+	s.UpdateUsersWithBandwidth(userList, uuidList, passwordList, nil)
+}
+
+// UpdateUsersWithBandwidth updates users with optional bandwidth limits
+func (s *Service[U]) UpdateUsersWithBandwidth(userList []U, uuidList [][16]byte, passwordList []string, bandwidthList []UserBandwidthLimits) {
 	userMap := make(map[[16]byte]U)
 	passwordMap := make(map[U]string)
+	userBandwidthMap := make(map[U]UserBandwidthLimits)
+
 	for index := range userList {
 		userMap[uuidList[index]] = userList[index]
 		passwordMap[userList[index]] = passwordList[index]
+
+		// Set bandwidth limits if provided
+		if bandwidthList != nil && index < len(bandwidthList) {
+			userBandwidthMap[userList[index]] = bandwidthList[index]
+			// Update the bandwidth manager with user-specific limits
+			s.bandwidthManager.SetUserLimits(userList[index], bandwidthList[index])
+		}
 	}
+
 	s.userMap = userMap
 	s.passwordMap = passwordMap
+	s.userBandwidthMap = userBandwidthMap
+}
+
+// SetUserBandwidthLimits sets bandwidth limits for a specific user
+func (s *Service[U]) SetUserBandwidthLimits(user U, limits UserBandwidthLimits) {
+	s.userBandwidthMap[user] = limits
+	s.bandwidthManager.SetUserLimits(user, limits)
+}
+
+// GetUserBandwidthLimits gets bandwidth limits for a specific user
+func (s *Service[U]) GetUserBandwidthLimits(user U) UserBandwidthLimits {
+	if limits, exists := s.userBandwidthMap[user]; exists {
+		return limits
+	}
+	// Return defaults if not found
+	return UserBandwidthLimits{
+		Upload:   s.bandwidthManager.defaults.Upload,
+		Download: s.bandwidthManager.defaults.Download,
+		Burst:    s.bandwidthManager.defaults.Burst,
+	}
+}
+
+// GetBandwidthStats returns bandwidth statistics for all users
+func (s *Service[U]) GetBandwidthStats() map[U]BandwidthStats {
+	allStats := s.bandwidthManager.GetAllStats()
+	result := make(map[U]BandwidthStats)
+
+	// Convert the interface{} keys to the actual user type
+	for userKey, stats := range allStats {
+		if user, ok := userKey.(U); ok {
+			result[user] = stats
+		}
+	}
+
+	return result
 }
 
 func (s *Service[U]) Start(conn net.PacketConn) error {
@@ -173,15 +228,16 @@ func (s *Service[U]) handleConnection(connection quic.Connection) {
 
 type serverSession[U comparable] struct {
 	*Service[U]
-	ctx        context.Context
-	quicConn   quic.Connection
-	connAccess sync.Mutex
-	connDone   chan struct{}
-	connErr    error
-	authDone   chan struct{}
-	authUser   U
-	udpAccess  sync.RWMutex
-	udpConnMap map[uint16]*udpPacketConn
+	ctx              context.Context
+	quicConn         quic.Connection
+	connAccess       sync.Mutex
+	connDone         chan struct{}
+	connErr          error
+	authDone         chan struct{}
+	authUser         U
+	udpAccess        sync.RWMutex
+	udpConnMap       map[uint16]*udpPacketConn
+	bandwidthLimiter *BandwidthLimiter
 }
 
 func (s *serverSession[U]) handle() {
@@ -257,6 +313,8 @@ func (s *serverSession[U]) handleUniStream(stream quic.ReceiveStream) error {
 			return E.New("authentication: token mismatch")
 		}
 		s.authUser = user
+		// Get bandwidth limiter for this user
+		s.bandwidthLimiter = s.bandwidthManager.GetLimiter(user)
 		close(s.authDone)
 		return nil
 	case CommandPacket:
@@ -356,11 +414,23 @@ func (s *serverSession[U]) handleStream(stream quic.Stream) error {
 		Stream:      stream,
 		destination: destination,
 	}
-	if buffer.IsEmpty() {
-		buffer.Release()
+
+	// Apply bandwidth limiting if enabled
+	if s.bandwidthLimiter != nil {
+		if buffer.IsEmpty() {
+			buffer.Release()
+			conn = newBandwidthLimitedConn(conn, s.bandwidthLimiter)
+		} else {
+			conn = newBandwidthLimitedCachedConn(conn, buffer, s.bandwidthLimiter)
+		}
 	} else {
-		conn = bufio.NewCachedConn(conn, buffer)
+		if buffer.IsEmpty() {
+			buffer.Release()
+		} else {
+			conn = bufio.NewCachedConn(conn, buffer)
+		}
 	}
+
 	s.handler.NewConnectionEx(auth.ContextWithUser(s.ctx, s.authUser), conn, M.SocksaddrFromNet(s.quicConn.RemoteAddr()).Unwrap(), destination, nil)
 	return nil
 }

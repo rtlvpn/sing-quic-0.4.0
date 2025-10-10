@@ -1,0 +1,66 @@
+{
+  "log": {
+    "level": "debug",
+    "timestamp": true
+  },
+  "dns": {
+    "rules": [],
+    "servers": []
+  },
+  "inbounds": [
+    {
+      "auth_timeout": "3s",
+      "congestion_control": "bbr",
+      "heartbeat": "5s",
+      "listen": "::",
+      "listen_port": 27030,
+      "tag": "tuic-21317",
+      "type": "tuic",
+      "udp_fragment": true,
+      "udp_timeout": "5m",
+      "bandwidth_limit": {
+        "enabled": true,
+        "default_upload": 512000,
+        "default_download": 512000,
+        "default_burst": 41943040
+      },
+      "users": [
+        {
+          "name": "user-a06483bc",
+          "uuid": "a06483bc-d0af-4d51-aefb-d9bf7f899ea8",
+          "password": "3PWge6B58l",
+          "upload": 512000,
+          "download": 512000,
+          "burst": 41943040
+        },
+        {
+          "name": "premium-user",
+          "uuid": "b1234567-e89f-4d51-aefb-d9bf7f899ea8", 
+          "password": "premiumPass123",
+          "upload": 1048576,
+          "download": 1048576,
+          "burst": 83886080
+        },
+        {
+          "name": "basic-user",
+          "uuid": "c2345678-f89g-4d51-aefb-d9bf7f899ea8",
+          "password": "basicPass456",
+          "upload": 256000,
+          "download": 256000,
+          "burst": 20971520
+        }
+      ],
+      "zero_rtt_handshake": false,
+      "tls": {
+        "alpn": [
+          "h3"
+        ],
+        "certificate_path": "/etc/letsencrypt/live/heatmapeldritch.gleeze.com/fullchain.pem",
+        "enabled": true,
+        "key_path": "/etc/letsencrypt/live/heatmapeldritch.gleeze.com/privkey.pem",
+        "server_name": "heatmapeldritch.gleeze.com"
+      }
+    }     
+  ],
+  "outbounds": []
+}
