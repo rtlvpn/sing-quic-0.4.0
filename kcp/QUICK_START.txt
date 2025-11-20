@@ -1,0 +1,49 @@
+╔══════════════════════════════════════════════════════════════════════╗
+║          KCP Integration into sing-box - Quick Reference             ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+📋 FILES TO CREATE IN SING-BOX:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  □ constant/protocol.go      → Add: TypeKCP = "kcp"
+  □ option/kcp.go             → KCPOptions, KCPOutboundOptions, KCPInboundOptions
+  □ outbound/kcp.go           → Client implementation (300 lines)
+  □ inbound/kcp.go            → Server implementation (300 lines)
+  
+📝 FILES TO MODIFY IN SING-BOX:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  □ option/outbound.go        → Add KCPOptions field + UnmarshalJSON case
+  □ option/inbound.go         → Add KCPOptions field + UnmarshalJSON case
+  □ outbound/builder.go       → Add case C.TypeKCP: return NewKCP(...)
+  □ inbound/builder.go        → Add case C.TypeKCP: return NewKCP(...)
+
+🔧 CORE IMPLEMENTATION:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Client (outbound/kcp.go):
+    - NewKCP() → Creates kcp.Client
+    - DialContext() → Returns net.Conn for TCP/UDP
+    - ListenPacket() → Returns net.PacketConn
+    
+  Server (inbound/kcp.go):
+    - NewKCP() → Creates kcp.Service[int]
+    - Start() → Calls service.Start(udpConn)
+    - NewConnectionEx() → Routes TCP connections
+    - NewPacketConnectionEx() → Routes UDP packets
+
+📦 DEPENDENCIES:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  go get github.com/sagernet/sing-quic@latest
+  go get github.com/xtaci/kcp-go/v5@latest
+
+🧪 TEST CONFIG:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Client: {"type":"kcp","server":"...","uuid":"...","password":"..."}
+  Server: {"type":"kcp","listen":"...","users":[{"uuid":"..."}]}
+
+✅ VERIFICATION:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  1. go build -o sing-box ./cmd/sing-box
+  2. ./sing-box run -c server.json
+  3. ./sing-box run -c client.json
+  4. curl -x socks5://127.0.0.1:1080 http://example.com
+
+📚 FULL GUIDE: See SING_BOX_INTEGRATION.md (905 lines, complete)

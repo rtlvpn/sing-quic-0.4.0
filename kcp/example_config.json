@@ -1,0 +1,135 @@
+{
+  "client": {
+    "server": "server.example.com",
+    "server_port": 8388,
+    "uuid": "12345678-1234-1234-1234-123456789abc",
+    "password": "user-password",
+    "kcp": {
+      "mtu": 1350,
+      "snd_wnd": 128,
+      "rcv_wnd": 512,
+      "nodelay": 1,
+      "interval": 20,
+      "resend": 2,
+      "nc": 1
+    },
+    "crypt": "my-encryption-key",
+    "fec": {
+      "data_shard": 10,
+      "parity_shard": 3
+    },
+    "heartbeat": "10s"
+  },
+  "server": {
+    "listen": "0.0.0.0",
+    "listen_port": 8388,
+    "users": [
+      {
+        "uuid": "12345678-1234-1234-1234-123456789abc",
+        "password": "user-password"
+      },
+      {
+        "uuid": "87654321-4321-4321-4321-cba987654321",
+        "password": "another-password"
+      }
+    ],
+    "kcp": {
+      "mtu": 1350,
+      "snd_wnd": 128,
+      "rcv_wnd": 512,
+      "nodelay": 1,
+      "interval": 20,
+      "resend": 2,
+      "nc": 1
+    },
+    "crypt": "my-encryption-key",
+    "fec": {
+      "data_shard": 10,
+      "parity_shard": 3
+    },
+    "heartbeat": "10s"
+  },
+  "presets": {
+    "default": {
+      "description": "Balanced performance and reliability",
+      "kcp": {
+        "mtu": 1350,
+        "snd_wnd": 128,
+        "rcv_wnd": 512,
+        "nodelay": 1,
+        "interval": 20,
+        "resend": 2,
+        "nc": 1
+      }
+    },
+    "aggressive": {
+      "description": "Maximum speed on good networks",
+      "kcp": {
+        "mtu": 1400,
+        "snd_wnd": 512,
+        "rcv_wnd": 2048,
+        "nodelay": 1,
+        "interval": 10,
+        "resend": 2,
+        "nc": 1
+      }
+    },
+    "conservative": {
+      "description": "Better for unstable networks",
+      "kcp": {
+        "mtu": 1350,
+        "snd_wnd": 256,
+        "rcv_wnd": 1024,
+        "nodelay": 0,
+        "interval": 40,
+        "resend": 1,
+        "nc": 0
+      },
+      "fec": {
+        "data_shard": 10,
+        "parity_shard": 3
+      }
+    },
+    "gaming": {
+      "description": "Lowest latency for gaming",
+      "kcp": {
+        "mtu": 1350,
+        "snd_wnd": 128,
+        "rcv_wnd": 512,
+        "nodelay": 1,
+        "interval": 10,
+        "resend": 2,
+        "nc": 1
+      }
+    }
+  },
+  "notes": {
+    "kcp_options": {
+      "mtu": "Maximum transmission unit (1200-1500, default: 1350)",
+      "snd_wnd": "Send window size in packets (default: 128)",
+      "rcv_wnd": "Receive window size in packets (default: 512)",
+      "nodelay": "0=normal mode, 1=no delay mode (default: 1)",
+      "interval": "Internal update interval in ms (10-100, default: 20)",
+      "resend": "Fast resend mode (0-5, default: 2)",
+      "nc": "Disable congestion control: 0=enabled, 1=disabled (default: 1)"
+    },
+    "fec": {
+      "description": "Forward Error Correction for packet loss recovery",
+      "data_shard": "Number of data packets per FEC group (default: 10)",
+      "parity_shard": "Number of parity packets per FEC group (default: 3)",
+      "overhead": "Bandwidth overhead = parity_shard / data_shard * 100%",
+      "recovery": "Can recover up to parity_shard lost packets per group"
+    },
+    "crypt": {
+      "description": "Pre-shared key for KCP layer encryption",
+      "note": "Must match between client and server. Uses AES encryption.",
+      "optional": "Can be empty to disable encryption (not recommended)"
+    },
+    "authentication": {
+      "description": "UUID-based authentication happens after KCP connection",
+      "uuid": "16-byte user identifier",
+      "password": "User password combined with UUID for token generation",
+      "token": "SHA256(UUID + Password) sent to server for verification"
+    }
+  }
+}
